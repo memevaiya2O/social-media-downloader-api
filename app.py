@@ -29,7 +29,7 @@ from pydantic import BaseModel, HttpUrl
 # ------------------------------------------------------------------ setup
 
 APP_TITLE = "Social Media Video & Audio Download API"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.0"
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "social-dl"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 MAX_DURATION_SECONDS = int(os.getenv("MAX_DURATION_SECONDS", "7200"))  # 2h default guard
@@ -95,6 +95,7 @@ def base_ydl_opts() -> Dict[str, Any]:
 
 
 def sanitize_filename(name: str, max_len: int = 80) -> str:
+    name = re.sub(r'[\x00-\x1f\x7f]', "", name)  # strip control chars
     name = re.sub(r'[\\/*?:"<>|]', "", name).strip()
     name = re.sub(r"\s+", " ", name)
     return (name[:max_len] or "download").strip()
@@ -127,21 +128,118 @@ def simplify_format(f: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ------------------------------------------------- cookies + anti-bot
+# YouTube flags datacenter IPs (Render/Railway/VPS) with
+# "Sign in to confirm you're not a bot". We fight it two ways:
+#   1) rotate through alternate YouTube player clients (mobile/TV API
+#      endpoints don't enforce the same IP check), and
+#   2) optional authenticated cookies via YOUTUBE_COOKIES env var
+#      (Render/Railway) or a local cookies.txt file (see README).
+
+COOKIES_PATH = Path(__file__).parent / "cookies.txt"
+COOKIES_ENV = "YOUTUBE_COOKIES"
+_cached_cookiefile: Optional[str] = None
+
+BOT_ERROR_DETAIL = (
+    "YouTube blocked this server's IP with a bot-check ('Sign in to confirm "
+    "you're not a bot'). This is very common on Render/Railway free-tier IPs — "
+    "your link is fine. The API already auto-retried with alternate YouTube "
+    "clients. Fix: add a YOUTUBE_COOKIES env var with your exported "
+    "youtube.com cookies (see README section 'Fix: YouTube bot-check'), then "
+    "redeploy. Check /api/health to confirm cookies loaded."
+)
+
+
+def is_bot_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return "not a bot" in m or "sign in to confirm" in m
+
+
+def get_cookiefile() -> Optional[str]:
+    """Return a cookies file path if available (env var or local file)."""
+    global _cached_cookiefile
+    if _cached_cookiefile and Path(_cached_cookiefile).exists():
+        return _cached_cookiefile
+    # 1) env var (for Render / Railway) — paste raw cookies.txt content
+    env_cookies = os.getenv(COOKIES_ENV, "").strip().strip('"').strip("'")
+    if env_cookies and "youtube.com" in env_cookies.lower():
+        p = DOWNLOAD_DIR / "yt-cookies.txt"
+        p.write_text(env_cookies + "\n", encoding="utf-8")
+        _cached_cookiefile = str(p)
+        return _cached_cookiefile
+    # 2) local cookies.txt next to app.py (local dev)
+    if COOKIES_PATH.exists() and COOKIES_PATH.stat().st_size > 100:
+        _cached_cookiefile = str(COOKIES_PATH)
+        return _cached_cookiefile
+    return None
+
+
+def ydl_profiles() -> List[Dict[str, Any]]:
+    """Ordered option-overlays to try (YouTube anti-bot fallback chain)."""
+    cookiefile = get_cookiefile()
+    android_args = {"youtube": {
+        "player_client": ["android_music", "android", "web"],
+        "player_skip": ["configs"],
+    }}
+    alt_args = {"youtube": {
+        "player_client": ["mweb", "tv", "web"],
+        "player_skip": ["configs", "webpage"],
+    }}
+    profiles: List[Dict[str, Any]] = []
+    if cookiefile:
+        profiles.append({"cookiefile": cookiefile})  # authenticated first
+        profiles.append({"cookiefile": cookiefile, "extractor_args": android_args})
+    profiles.append({"extractor_args": android_args})  # hardened default
+    profiles.append({"extractor_args": alt_args})      # alternate clients
+    profiles.append({} if not cookiefile else {"cookiefile": cookiefile})  # stock
+    return profiles
+
+
+def extract_with_fallback(
+    url: str,
+    extra: Optional[Dict[str, Any]] = None,
+    download: bool = False,
+) -> Dict[str, Any]:
+    """Run yt-dlp, auto-retrying through anti-bot client profiles."""
+    profiles = ydl_profiles()
+    last_err = "unknown error"
+    for i, profile in enumerate(profiles):
+        opts = base_ydl_opts()
+        if extra:
+            opts.update(extra)
+        for k, v in profile.items():
+            if k == "extractor_args" and isinstance(opts.get(k), dict):
+                merged = dict(opts[k])
+                merged.update(v)
+                opts[k] = merged
+            else:
+                opts[k] = v
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=download)
+            if not info:
+                last_err = "No media found at this URL."
+                continue
+            if info.get("_type") == "playlist" and info.get("entries"):
+                info = info["entries"][0]
+            return info
+        except HTTPException:
+            raise
+        except yt_dlp.utils.DownloadError as e:
+            last_err = clean_error(str(e))
+            if is_bot_error(last_err) and i < len(profiles) - 1:
+                continue  # try next client profile
+            break
+        except Exception as e:
+            last_err = str(e)[:500]
+            break
+    if is_bot_error(last_err):
+        raise HTTPException(status_code=502, detail=BOT_ERROR_DETAIL + f" (last error: {last_err[:200]})")
+    raise HTTPException(status_code=400, detail=f"Could not fetch this URL: {last_err}")
+
+
 def extract_info(url: str) -> Dict[str, Any]:
-    opts = base_ydl_opts()
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        raise HTTPException(status_code=400, detail=f"Could not fetch this URL: {clean_error(str(e))}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extractor error: {e}")
-    if not info:
-        raise HTTPException(status_code=400, detail="No media found at this URL.")
-    # If a playlist slipped through, take first entry
-    if info.get("_type") == "playlist" and info.get("entries"):
-        info = info["entries"][0]
-    return info
+    return extract_with_fallback(url, download=False)
 
 
 def clean_error(msg: str) -> str:
@@ -198,15 +296,13 @@ def download_to_file(url: str, dtype: str, quality: str, fmt: str) -> Path:
     fmt = fmt.lower()
     selector = build_format_selector(dtype, quality, fmt)
 
-    opts = base_ydl_opts()
-    opts.update({
+    dl_extra: Dict[str, Any] = {
         "format": selector,
         "outtmpl": outtmpl,
-        "merge_output_format": fmt if dtype == "video" and fmt in ("mp4", "webm", "mkv") else None,
         "noplaylist": True,
-    })
-    # drop None values
-    opts = {k: v for k, v in opts.items() if v is not None}
+    }
+    if dtype == "video" and fmt in ("mp4", "webm", "mkv"):
+        dl_extra["merge_output_format"] = fmt
 
     # audio conversion needs ffmpeg
     if dtype == "audio" and fmt in ("mp3", "wav", "opus", "aac"):
@@ -214,35 +310,33 @@ def download_to_file(url: str, dtype: str, quality: str, fmt: str) -> Path:
             # gracefully fall back to native container (usually m4a/webm)
             fmt = "best"
         else:
-            opts["postprocessors"] = [{
+            dl_extra["postprocessors"] = [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": fmt,
                 "preferredquality": "192",
             }]
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if info.get("_type") == "playlist" and info.get("entries"):
-                info = info["entries"][0]
-            # duration guard
-            dur = info.get("duration") or 0
-            if dur and dur > MAX_DURATION_SECONDS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Video too long ({dur//60} min). Max allowed is {MAX_DURATION_SECONDS//60} min."
-                )
-    except HTTPException:
-        raise
-    except yt_dlp.utils.DownloadError as e:
+        info = extract_with_fallback(url, extra=dl_extra, download=True)
+    except HTTPException as e:
         shutil.rmtree(workdir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail=f"Download failed: {clean_error(str(e))}")
-    except Exception as e:
-        shutil.rmtree(workdir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Download error: {e}")
+        # keep the friendly bot-check message, prefix anything else
+        if e.status_code == 502:
+            raise
+        raise HTTPException(status_code=e.status_code, detail=f"Download failed: {e.detail}")
 
-    # find downloaded file
-    files = [p for p in workdir.iterdir() if p.is_file()]
+    # duration guard
+    dur = info.get("duration") or 0
+    if dur and dur > MAX_DURATION_SECONDS:
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video too long ({dur//60} min). Max allowed is {MAX_DURATION_SECONDS//60} min."
+        )
+
+    # find downloaded file (ignore partial/temp files from retries)
+    files = [p for p in workdir.iterdir()
+             if p.is_file() and p.suffix.lower() not in (".part", ".ytdl", ".temp", ".tmp")]
     if not files:
         shutil.rmtree(workdir, ignore_errors=True)
         raise HTTPException(status_code=500, detail="Download finished but no file was produced.")
@@ -263,6 +357,8 @@ def cleanup_path(path: Path):
 
 def media_type_for(path: Path, dtype: str) -> str:
     ext = path.suffix.lower().lstrip(".")
+    if dtype == "audio" and ext == "mp4":
+        return "audio/mp4"  # audio-only MP4 (no-ffmpeg fallback)
     return {
         "mp4": "video/mp4", "webm": "video/webm", "mkv": "video/x-matroska",
         "mov": "video/quicktime", "flv": "video/x-flv",
@@ -294,6 +390,9 @@ def health():
         "version": APP_VERSION,
         "ffmpeg": ffmpeg_available(),
         "engine": f"yt-dlp {yt_dlp.version.__version__}",
+        "youtube_cookies": bool(get_cookiefile()),
+        "youtube_mode": "multi-client fallback (android → mweb/tv → default)"
+                        + (" + cookies ✅" if get_cookiefile() else " (no cookies)"),
     }
 
 
@@ -418,13 +517,7 @@ def handle_download(
     if direct:
         # Return a direct CDN URL without downloading to server
         selector = build_format_selector(dtype, quality, fmt)
-        opts = base_ydl_opts()
-        opts["format"] = selector
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except yt_dlp.utils.DownloadError as e:
-            raise HTTPException(status_code=400, detail=f"Could not resolve: {clean_error(str(e))}")
+        info = extract_with_fallback(url, extra={"format": selector}, download=False)
         direct_url = info.get("url")
         if not direct_url and info.get("requested_formats"):
             # merged formats → return both parts
@@ -444,11 +537,13 @@ def handle_download(
     path = download_to_file(url, dtype, quality, fmt)
     background_tasks.add_task(cleanup_path, path)
     filename = sanitize_filename(path.stem) + path.suffix
+    # NOTE: don't set Content-Disposition manually — non-ASCII titles
+    # (e.g. hindi songs with ｜) crash latin-1 header encoding.
+    # Starlette's `filename=` handles RFC 5987 UTF-8 encoding for us.
     return FileResponse(
         path,
         media_type=media_type_for(path, dtype),
         filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

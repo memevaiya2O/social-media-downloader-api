@@ -173,12 +173,32 @@ open("song.mp3", "wb").write(r.content)
 
 ---
 
+## 🛠 Fix: YouTube "Sign in to confirm you're not a bot"
+
+**Why it happens:** YouTube flags datacenter IPs (Render, Railway, most VPS providers) and demands bot verification for anonymous requests. Your link is fine — the *server IP* is blocked.
+
+**Already built-in ✅:** every request auto-retries through multiple YouTube clients (`android_music → android → mweb → tv → web`). Mobile/TV API endpoints usually bypass the IP check, so most links work with **zero setup**.
+
+**If it still fails, add cookies (2 minutes):**
+
+1. Desktop Chrome/Edge → install the **"Get cookies.txt LOCALLY"** extension
+2. Go to `youtube.com` (logged in — preferably a spare/throwaway account) → click Export → copy **all** text
+3. **Render:** Dashboard → your service → **Environment** → add `YOUTUBE_COOKIES` = pasted text → Save (auto-redeploys)
+   **Railway:** service → **Variables** → add `YOUTUBE_COOKIES` → redeploys automatically
+   **Local:** save the text as `cookies.txt` next to `app.py`
+4. Open `/api/health` → `"youtube_cookies": true` means it worked ✅
+
+> ⚠️ Never commit `cookies.txt` (it's gitignored). Use a spare Google account, and re-export if errors return after weeks/months (cookies expire).
+
+---
+
 ## ⚙️ Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8000` | Server port (auto-injected by Render/Railway) |
 | `MAX_DURATION_SECONDS` | `3600` | Reject videos longer than this |
+| `YOUTUBE_COOKIES` | *(empty)* | Paste exported youtube.com cookies → fixes bot-check (see below) |
 
 ---
 

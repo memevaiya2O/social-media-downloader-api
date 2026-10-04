@@ -1,0 +1,11 @@
+# Netscape HTTP Cookie File — EXAMPLE / TEMPLATE
+# How to get real cookies:
+#   1. Desktop Chrome/Edge → install "Get cookies.txt LOCALLY" extension
+#   2. Go to https://www.youtube.com (logged in, preferably a spare account)
+#   3. Click the extension → "Export" → copy ALL text
+#   4a. LOCAL: save as "cookies.txt" next to app.py  (never commit it!)
+#   4b. RENDER/RAILWAY: paste the text into env var YOUTUBE_COOKIES, redeploy
+#   5. Check /api/health → "youtube_cookies" should be true
+#
+# Netscape format looks like this (domain, flag, path, secure, expiry, name, value):
+# .youtube.com	TRUE	/	TRUE	1799999999	CONSENT	YES+cb.20240101-00-p0.en+FX+123
