@@ -175,18 +175,36 @@ open("song.mp3", "wb").write(r.content)
 
 ## 🛠 Fix: YouTube "Sign in to confirm you're not a bot"
 
-**Why it happens:** YouTube flags datacenter IPs (Render, Railway, most VPS providers) and demands bot verification for anonymous requests. Your link is fine — the *server IP* is blocked.
+**Why it happens:** YouTube flags datacenter IPs (Render, Railway, most VPS providers) and demands bot verification for anonymous requests. Your link is fine — the *server IP* is blocked. As of 2026 even alternate API clients and public Piped/Invidious instances are heavily restricted, so **authenticated cookies are the reliable fix**.
 
-**Already built-in ✅:** every request auto-retries through multiple YouTube clients (`android_music → android → mweb → tv → web`). Mobile/TV API endpoints usually bypass the IP check, so most links work with **zero setup**.
+**Already built-in ✅:** every request tries Chrome impersonation + alternate YouTube clients (`android_music → android → mweb → tv → web`) and falls back to Piped/Invidious (metadata usually works even without cookies — downloads need cookies).
 
-**If it still fails, add cookies (2 minutes):**
+### Step 1 — Export your cookies (once, 1 minute)
 
 1. Desktop Chrome/Edge → install the **"Get cookies.txt LOCALLY"** extension
-2. Go to `youtube.com` (logged in — preferably a spare/throwaway account) → click Export → copy **all** text
-3. **Render:** Dashboard → your service → **Environment** → add `YOUTUBE_COOKIES` = pasted text → Save (auto-redeploys)
-   **Railway:** service → **Variables** → add `YOUTUBE_COOKIES` → redeploys automatically
-   **Local:** save the text as `cookies.txt` next to `app.py`
-4. Open `/api/health` → `"youtube_cookies": true` means it worked ✅
+2. Go to `youtube.com` (logged in — preferably a spare/throwaway account)
+3. Click the extension → **Export** → copy **ALL** the text (hundreds of lines)
+
+### Step 2 — Save them (pick ONE method)
+
+**Method A — Web UI (fastest, 10 seconds, survives until redeploy):**
+1. Open your deployed app `/` → scroll to **🍪 YouTube blocked?** box
+2. Paste the full export → **Save Cookies** → ✅ done
+
+**Method B — API call:**
+```bash
+# save cookies.json = {"cookies": "<paste full export>"}
+curl -X POST https://YOUR-APP.onrender.com/api/cookies \
+  -H "Content-Type: application/json" -d @cookies.json
+```
+
+**Method C — Env var (persistent across redeploys):**
+- **Render:** Dashboard → service → **Environment** → add `YOUTUBE_COOKIES` = pasted text → Save (auto-redeploys)
+- **Railway:** service → **Variables** → add `YOUTUBE_COOKIES` → redeploys automatically
+- **Local:** save the text as `cookies.txt` next to `app.py`
+
+### Step 3 — Verify ✅
+Open `/api/health` → `"youtube_cookies": true` means it worked. Retry your download!
 
 > ⚠️ Never commit `cookies.txt` (it's gitignored). Use a spare Google account, and re-export if errors return after weeks/months (cookies expire).
 
@@ -199,6 +217,8 @@ open("song.mp3", "wb").write(r.content)
 | `PORT` | `8000` | Server port (auto-injected by Render/Railway) |
 | `MAX_DURATION_SECONDS` | `3600` | Reject videos longer than this |
 | `YOUTUBE_COOKIES` | *(empty)* | Paste exported youtube.com cookies → fixes bot-check (see below) |
+| `YDL_PROXY` | *(empty)* | Optional `http://user:pass@host:port` residential proxy for yt-dlp |
+| `EXTRA_INVIDIOUS` / `EXTRA_PIPED` | *(empty)* | Comma-separated extra fallback API bases |
 
 ---
 

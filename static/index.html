@@ -17,6 +17,8 @@
   label { display: block; font-size: .8rem; color: #94a3b8; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
   input[type=text] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 1rem; }
   input[type=text]:focus { outline: none; border-color: #22d3ee; }
+  textarea { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: .78rem; font-family: monospace; resize: vertical; }
+  textarea:focus { outline: none; border-color: #22d3ee; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .row > div { flex: 1; min-width: 140px; }
   select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: .95rem; }
@@ -38,6 +40,8 @@
   .docs { text-align: center; margin-top: 18px; color: #64748b; font-size: .85rem; }
   .docs a { color: #22d3ee; }
   .error { background: #7f1d1d; border: 1px solid #ef4444; padding: 10px 14px; border-radius: 10px; margin-top: 12px; font-size: .9rem; }
+  .okbox { background: #064e3b; border: 1px solid #10b981; padding: 10px 14px; border-radius: 10px; margin-top: 12px; font-size: .9rem; }
+  .hint { font-size: .8rem; color: #64748b; margin-top: 8px; }
   @media(max-width:600px){ .meta{flex-direction:column} .meta img{width:100%} }
 </style>
 </head>
@@ -86,6 +90,13 @@
     <label>API response</label>
     <pre id="json"></pre>
   </div>
+  <div class="card">
+    <label>🍪 YouTube blocked? Paste cookies — one-time fix <span id="ckstatus" style="float:right;text-transform:none"></span></label>
+    <textarea id="cookies" rows="4" placeholder="# Netscape HTTP Cookie File — paste FULL export from youtube.com (Chrome extension: Get cookies.txt LOCALLY)"></textarea>
+    <div class="btns"><button class="btn-dl" id="btnCk" onclick="saveCookies()">💾 Save Cookies</button></div>
+    <div id="ckmsg"></div>
+    <p class="hint">Export while logged in at youtube.com (spare account recommended). Active instantly until next redeploy — for persistence set the YOUTUBE_COOKIES env var. <a href="/docs" target="_blank" style="color:#22d3ee">API docs</a></p>
+  </div>
   <p class="docs">Interactive API docs: <a href="/docs" target="_blank">/docs</a> · Health: <a href="/api/health" target="_blank">/api/health</a></p>
   <p class="docs" style="margin-top:8px">Crafted with ❤️ by <b>R4AD Bhai</b> · <a href="https://t.me/zerox6t9" target="_blank">@zerox6t9</a> · <a href="https://t.me/Infinity_codex" target="_blank">@Infinity_codex</a></p>
 </div>
@@ -123,6 +134,28 @@ function download(){
 $('type').addEventListener('change', e=>{
   $('format').value = e.target.value==='audio' ? 'mp3' : 'mp4';
 });
+async function saveCookies(){
+  const t = $('cookies').value.trim();
+  if(!t || t.length < 200){ $('ckmsg').innerHTML = '<div class="error">❌ Paste the FULL cookies export (it is long — hundreds of lines).</div>'; return; }
+  $('btnCk').disabled = true;
+  $('ckmsg').innerHTML = '⏳ Saving…';
+  try{
+    const r = await fetch('/api/cookies', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cookies:t})});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail||'Failed');
+    $('ckmsg').innerHTML = '<div class="okbox">✅ Cookies saved! YouTube downloads should work now. ('+(j.note||'')+')</div>';
+    $('cookies').value = '';
+    loadCookieStatus();
+  }catch(e){ $('ckmsg').innerHTML = '<div class="error">❌ '+e.message+'</div>'; }
+  $('btnCk').disabled = false;
+}
+async function loadCookieStatus(){
+  try{
+    const h = await fetch('/api/health').then(r=>r.json());
+    $('ckstatus').textContent = h.youtube_cookies ? '✅ active' : '❌ not set';
+  }catch(e){ $('ckstatus').textContent = ''; }
+}
+loadCookieStatus();
 </script>
 </body>
 </html>
