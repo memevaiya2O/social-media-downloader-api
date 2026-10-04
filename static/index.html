@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Media Downloader API — Tester</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 24px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin-bottom: 4px; }
+  h1 span { background: linear-gradient(90deg,#22d3ee,#a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: #94a3b8; margin-bottom: 20px; font-size: .95rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+  .badge { background: #1e293b; border: 1px solid #334155; padding: 4px 10px; border-radius: 20px; font-size: .75rem; color: #cbd5e1; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; font-size: .8rem; color: #94a3b8; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
+  input[type=text] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 1rem; }
+  input[type=text]:focus { outline: none; border-color: #22d3ee; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
+  select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: .95rem; }
+  .btns { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  button { flex: 1; min-width: 150px; padding: 12px; border: none; border-radius: 10px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: .15s; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .btn-info { background: #334155; color: #fff; }
+  .btn-info:hover { background: #475569; }
+  .btn-dl { background: linear-gradient(90deg,#06b6d4,#8b5cf6); color: #fff; }
+  .btn-dl:hover { filter: brightness(1.1); }
+  #result { display: none; }
+  #result.show { display: block; }
+  .meta { display: flex; gap: 14px; margin-bottom: 14px; }
+  .meta img { width: 180px; border-radius: 10px; object-fit: cover; }
+  .meta h3 { font-size: 1.05rem; margin-bottom: 6px; }
+  .meta p { font-size: .85rem; color: #94a3b8; margin-bottom: 3px; }
+  pre { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 12px; overflow-x: auto; font-size: .78rem; max-height: 320px; overflow-y: auto; }
+  .spinner { text-align: center; padding: 16px; color: #22d3ee; display: none; }
+  .docs { text-align: center; margin-top: 18px; color: #64748b; font-size: .85rem; }
+  .docs a { color: #22d3ee; }
+  .error { background: #7f1d1d; border: 1px solid #ef4444; padding: 10px 14px; border-radius: 10px; margin-top: 12px; font-size: .9rem; }
+  @media(max-width:600px){ .meta{flex-direction:column} .meta img{width:100%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📥 <span>Social Media Downloader API</span></h1>
+  <p class="sub">Paste any video link → fetch info → download video or audio. Free, no key required.</p>
+  <div class="badges">
+    <span class="badge">▶ YouTube</span><span class="badge">🎵 TikTok</span>
+    <span class="badge">📸 Instagram</span><span class="badge">📘 Facebook</span>
+    <span class="badge">𝕏 Twitter/X</span><span class="badge">👽 Reddit</span>
+    <span class="badge">🎬 Vimeo</span><span class="badge">☁ SoundCloud</span>
+    <span class="badge">+1000 more</span>
+  </div>
+  <div class="card">
+    <label>Video / Post URL</label>
+    <input type="text" id="url" placeholder="https://www.tiktok.com/@user/video/123... or YouTube / Instagram link">
+    <div class="row">
+      <div><label>Type</label>
+        <select id="type"><option value="video">🎬 Video</option><option value="audio">🎵 Audio only</option></select>
+      </div>
+      <div><label>Quality</label>
+        <select id="quality">
+          <option value="best">Best</option><option value="1080">1080p</option>
+          <option value="720" selected>720p</option><option value="480">480p</option>
+          <option value="360">360p</option><option value="lowest">Lowest (fast)</option>
+        </select>
+      </div>
+      <div><label>Format</label>
+        <select id="format">
+          <option value="mp4">MP4</option><option value="webm">WebM</option>
+          <option value="mkv">MKV</option><option value="mp3">MP3 (audio)</option>
+          <option value="m4a">M4A (audio)</option>
+        </select>
+      </div>
+    </div>
+    <div class="btns">
+      <button class="btn-info" id="btnInfo" onclick="fetchInfo()">🔍 Fetch Info</button>
+      <button class="btn-dl" id="btnDl" onclick="download()">⬇ Download</button>
+    </div>
+    <div class="spinner" id="spin">⏳ Working… please wait</div>
+    <div id="err"></div>
+  </div>
+  <div class="card" id="result">
+    <div class="meta" id="meta"></div>
+    <label>API response</label>
+    <pre id="json"></pre>
+  </div>
+  <p class="docs">Interactive API docs: <a href="/docs" target="_blank">/docs</a> · Health: <a href="/api/health" target="_blank">/api/health</a></p>
+  <p class="docs" style="margin-top:8px">Crafted with ❤️ by <b>R4AD Bhai</b> · <a href="https://t.me/zerox6t9" target="_blank">@zerox6t9</a> · <a href="https://t.me/Infinity_codex" target="_blank">@Infinity_codex</a></p>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+function setBusy(b){ $('btnInfo').disabled=b; $('btnDl').disabled=b; $('spin').style.display=b?'block':'none'; $('err').innerHTML=''; }
+function showErr(m){ $('err').innerHTML = '<div class="error">❌ '+m+'</div>'; }
+async function fetchInfo(){
+  const url = $('url').value.trim();
+  if(!url) return showErr('Please paste a URL first.');
+  setBusy(true);
+  try{
+    const r = await fetch('/api/info?url='+encodeURIComponent(url));
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail||'Failed');
+    $('result').classList.add('show');
+    $('json').textContent = JSON.stringify(j,null,2);
+    $('meta').innerHTML =
+      (j.thumbnail?'<img src="'+j.thumbnail+'" onerror="this.style.display=\'none\'">':'')+
+      '<div><h3>'+(j.title||'Untitled')+'</h3>'+
+      '<p>📺 '+(j.platform||'?')+' · 👤 '+(j.uploader||'?')+'</p>'+
+      '<p>⏱ '+(j.duration_string||(j.duration?j.duration+'s':'?'))+' · 👁 '+(j.view_count??'?')+' views</p>'+
+      '<p>🎞 Qualities: '+((j.available_qualities||[]).join(', ')||'?')+'</p></div>';
+    $('result').scrollIntoView({behavior:'smooth'});
+  }catch(e){ showErr(e.message); }
+  setBusy(false);
+}
+function download(){
+  const url = $('url').value.trim();
+  if(!url) return showErr('Please paste a URL first.');
+  const q = '/api/download?url='+encodeURIComponent(url)
+    +'&type='+$('type').value+'&quality='+$('quality').value+'&format='+$('format').value;
+  window.open(q,'_blank');
+}
+$('type').addEventListener('change', e=>{
+  $('format').value = e.target.value==='audio' ? 'mp3' : 'mp4';
+});
+</script>
+</body>
+</html>
